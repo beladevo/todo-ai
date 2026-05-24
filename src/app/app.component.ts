@@ -57,19 +57,53 @@ export class AppComponent {
     this.reply.set('…');
 
     await this.engine!.resetChat();
-    const systemPrompt = `
-      The user will ask questions about their todo list.
-      Here's the user's todo list:
-      ${this.todos().map(todo => `* ${todo.text} (${todo.done ? 'done' : 'not done'})`).join('\n')}`;
+    const systemPrompt = `You are a helpful assistant managing the user's todo list.
+Current todo list:
+${this.todos().map(todo => `* ${todo.text} (${todo.done ? 'done' : 'not done'})`).join('\n')}
+
+To add or delete a task, output ONLY a JSON object on a single line, nothing else:
+{"tool":"add_task","text":"<task text>"}
+{"tool":"delete_task","text":"<exact task text>"}
+
+For any other request, reply normally in plain text.`;
+
     const messages: ChatCompletionMessageParam[] = [
-      {role: "system", content: systemPrompt},
-      {role: "user", content: userPrompt}
+      {role: 'system', content: systemPrompt},
+      {role: 'user', content: userPrompt}
     ];
-    const chunks = await this.engine!.chat.completions.create({messages, stream: true});
-    let reply = '';
-    for await (const chunk of chunks) {
-      reply += chunk.choices[0]?.delta.content ?? '';
-      this.reply.set(reply);
+
+    const response = await this.engine!.chat.completions.create({messages, stream: false});
+    const content = response.choices[0].message.content ?? '';
+
+    let toolResult: string | null = null;
+    try {
+      const parsed = JSON.parse(content.trim());
+      if (parsed.tool === 'add_task' && parsed.text) {
+        this.todos.update(todos => [...todos, {text: parsed.text, done: false}]);
+        toolResult = `Task "${parsed.text}" added successfully.`;
+      } else if (parsed.tool === 'delete_task' && parsed.text) {
+        const found = this.todos().find(t => t.text.toLowerCase() === parsed.text.toLowerCase());
+        if (found) {
+          this.todos.update(todos => todos.filter(t => t !== found));
+          toolResult = `Task "${found.text}" deleted successfully.`;
+        } else {
+          toolResult = `Task "${parsed.text}" was not found in the list.`;
+        }
+      }
+    } catch {
+    }
+
+    if (toolResult !== null) {
+      messages.push({role: 'assistant', content});
+      messages.push({role: 'user', content: `Result: ${toolResult}. Confirm to the user what happened in one sentence.`});
+      const chunks = await this.engine!.chat.completions.create({messages, stream: true});
+      let reply = '';
+      for await (const chunk of chunks) {
+        reply += chunk.choices[0]?.delta.content ?? '';
+        this.reply.set(reply);
+      }
+    } else {
+      this.reply.set(content);
     }
   }
 }
