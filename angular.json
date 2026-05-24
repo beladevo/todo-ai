@@ -46,7 +46,8 @@
                   "maximumError": "8kB"
                 }
               ],
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "baseHref": "/demo/todo-ai/"
             },
             "development": {
               "optimization": false,
